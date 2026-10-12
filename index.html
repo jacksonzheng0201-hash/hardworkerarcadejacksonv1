@@ -85,6 +85,15 @@ main{flex:1;overflow-y:auto;padding:20px 24px 30px}
 .task-item .t-del{background:none;border:none;color:#555;font-size:1.1em;padding:4px 8px;border-radius:6px;transition:all .15s}
 .task-item .t-del:hover{color:var(--accent);background:rgba(233,69,96,.1)}
 .task-item .t-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-item .t-src{font-size:.7em;padding:3px 8px;border-radius:6px;background:rgba(192,132,252,.14);border:1px solid rgba(192,132,252,.35);color:#c084fc;flex-shrink:0;white-space:nowrap}
+.task-item .t-gems{font-size:.85em;color:#c084fc;font-weight:bold;flex-shrink:0}
+.task-item.gem-task{border-color:rgba(192,132,252,.32)}
+.mini-task .t-gems{margin-left:8px;color:#c084fc;font-size:.8em;font-weight:bold;flex-shrink:0}
+.gem-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-8px 0 18px}
+.gem-bar .gb-lbl{font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.gem-chip{background:rgba(192,132,252,.12);border:1px solid rgba(192,132,252,.35);color:#c084fc;border-radius:20px;padding:7px 14px;font-size:.8em;cursor:pointer;transition:all .2s}
+.gem-chip:hover{background:rgba(192,132,252,.24);transform:translateY(-1px)}
+.task-item.from-game{border-color:rgba(192,132,252,.35)}
 .empty-msg{text-align:center;color:var(--muted);padding:30px;font-size:.95em}
 
 /* ── SHOP ── */
@@ -111,6 +120,14 @@ main{flex:1;overflow-y:auto;padding:20px 24px 30px}
 .buy-btn.toggle-eq{background:var(--cyan);color:#000}
 .buy-btn.toggle-eq:hover{opacity:.85}
 .buy-btn.is-eq{background:transparent;border:2px solid var(--cyan);color:var(--cyan)}
+.eq-mini{background:var(--cyan);color:#000;margin-left:6px;padding:8px 12px}
+.shop-hint{color:var(--muted);font-size:.85em;margin:-6px 0 14px}
+.s-lv{font-size:.7em;font-weight:bold;color:var(--cyan);letter-spacing:1px;margin-bottom:4px}
+.s-pips{display:flex;gap:4px;justify-content:center;margin-bottom:8px}
+.s-pips .pip{width:14px;height:5px;border-radius:3px;background:rgba(255,255,255,.14)}
+.s-pips .pip.on{background:var(--cyan)}
+.s-next{font-size:.72em;color:#7ee0a0;margin-bottom:6px;line-height:1.35}
+.s-max{font-size:.75em;font-weight:bold;color:#c084fc;margin-bottom:8px;letter-spacing:1px}
 
 /* ── PRE-GAME ── */
 #s-play .pregame{text-align:center;padding:40px 0}
@@ -219,8 +236,15 @@ main{flex:1;overflow-y:auto;padding:20px 24px 30px}
           <option value="exercise">&#x1F3C3; Exercise (65)</option>
           <option value="other">&#x2B50; Other (40)</option>
         </select>
+        <select id="task-gems" title="Gem reward">
+          <option value="0">&#x1FA99; Coins only</option>
+          <option value="3">&#x1F48E; +3 gems</option>
+          <option value="5">&#x1F48E; +5 gems</option>
+          <option value="10">&#x1F48E; +10 gems</option>
+        </select>
         <button class="add-btn" id="add-task-btn">+ ADD</button>
       </div>
+      <div class="gem-bar" id="gem-bar"></div>
       <div id="task-list"></div>
     </section>
     <!-- SHOP -->
@@ -261,8 +285,11 @@ const DB={
   get(k,d){try{return JSON.parse(localStorage.getItem('hwa_'+k))||d}catch{return d}},
   set(k,v){localStorage.setItem('hwa_'+k,JSON.stringify(v))}
 };
-let P=DB.get('profile',{coins:0,gems:0,totalCoins:0,kills:0,gamesPlayed:0,tasksCompleted:0,highScore:0,soccerHigh:0,parkourHigh:0,streak:0,lastActive:null,inventory:[],equipped:[],firstVisit:true,checkpointDate:null,checkpointsClaimed:[]});
+let P=DB.get('profile',{coins:0,gems:0,totalCoins:0,kills:0,gamesPlayed:0,tasksCompleted:0,highScore:0,soccerHigh:0,parkourHigh:0,streak:0,lastActive:null,inventory:[],equipped:[],levels:{},firstVisit:true,checkpointDate:null,checkpointsClaimed:[]});
 if(P.gems==null)P.gems=0;
+if(!P.levels)P.levels={};
+if(!P.inventory)P.inventory=[];
+P.inventory.forEach(id=>{if(!P.levels[id])P.levels[id]=1});
 if(!P.checkpointsClaimed)P.checkpointsClaimed=[];
 if(P.soccerHigh==null)P.soccerHigh=0;
 if(P.parkourHigh==null)P.parkourHigh=0;
@@ -286,7 +313,7 @@ function resetCheckpointsIfNeeded(){
 function checkDailyCheckpoints(){
   resetCheckpointsIfNeeded();
   const n=todayTasks().length;
-  const bonus=equipped('luckyGems')?3:0;
+  const bonus=lvPick('luckyGems',[3,5,8],0);
   CHECKPOINTS.forEach(cp=>{
     if(n>=cp.n&&!P.checkpointsClaimed.includes(cp.n)){
       P.checkpointsClaimed.push(cp.n);
@@ -296,6 +323,60 @@ function checkDailyCheckpoints(){
   });
 }
 resetCheckpointsIfNeeded();
+
+// ── GAME CHECKPOINT MILESTONES: crossing one adds a fresh task ──
+const MILESTONES={
+  zombie:[{v:10,label:'10 zombies'},{v:25,label:'25 zombies'},{v:50,label:'50 zombies'},{v:100,label:'100 zombies'}],
+  soccer:[{v:1,label:'1 goal'},{v:3,label:'3 goals'},{v:5,label:'5 goals'},{v:10,label:'10 goals'}],
+  parkour:[{v:100,label:'100 meters'},{v:200,label:'200 meters'},{v:400,label:'400 meters'},{v:700,label:'700 meters'}],
+};
+const MILESTONE_TASKS=[
+  {title:'Read 10 pages of a book',category:'reading'},
+  {title:'Do 5 math problems',category:'homework'},
+  {title:'Write 3 sentences about your day',category:'homework'},
+  {title:'Practice spelling words for 10 minutes',category:'homework'},
+  {title:'Learn 5 brand-new words',category:'reading'},
+  {title:'Review your notes for 10 minutes',category:'homework'},
+  {title:'Do 10 jumping jacks',category:'exercise'},
+  {title:'Stretch for 5 minutes',category:'exercise'},
+  {title:'Walk or ride your bike for 10 minutes',category:'exercise'},
+  {title:'Clean up your desk',category:'chores'},
+  {title:'Put your toys away',category:'chores'},
+  {title:'Tidy your room for 5 minutes',category:'chores'},
+  {title:'Water the plants',category:'chores'},
+  {title:'Practice typing for 10 minutes',category:'other'},
+  {title:'Draw or color for 10 minutes',category:'other'},
+];
+let awardedMilestones=[],recentMTasks=[];
+function gameProgress(){
+  if(S.mode==='zombie')return S.kills;
+  if(S.mode==='soccer')return SO.goals||0;
+  if(S.mode==='parkour')return Math.max(0,Math.floor((PK.x-120)/8));
+  return 0;
+}
+function pickMilestoneTask(){
+  let avail=MILESTONE_TASKS.filter(t=>!recentMTasks.includes(t.title));
+  if(!avail.length){recentMTasks=[];avail=MILESTONE_TASKS}
+  const pick=avail[Math.random()*avail.length|0];
+  recentMTasks.push(pick.title);
+  if(recentMTasks.length>7)recentMTasks.shift();
+  return pick;
+}
+function checkMilestones(){
+  const list=MILESTONES[S.mode];if(!list)return;
+  const prog=gameProgress();
+  list.forEach((m,i)=>{
+    const key=S.mode+':'+i;
+    if(prog>=m.v&&!awardedMilestones.includes(key)){
+      awardedMilestones.push(key);
+      const t=pickMilestoneTask();
+      tasks.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),title:t.title,category:t.category,completed:false,completedAt:null,source:'milestone'});
+      P.milestoneTasks=(P.milestoneTasks||0)+1;
+      save();Audio.milestone();
+      toast('Checkpoint: '+m.label+'! New task added \u{1F3AF}','gem');
+    }
+  });
+}
 
 // Welcome bonus
 if(P.firstVisit){P.coins+=100;P.totalCoins+=100;P.firstVisit=false;save();setTimeout(()=>toast('Welcome! +100 starter coins!','coin'),400)}
@@ -313,38 +394,48 @@ if(P.firstVisit){P.coins+=100;P.totalCoins+=100;P.firstVisit=false;save();setTim
 //  SHOP ITEMS
 // ════════════════════════════════════════════
 const SHOP_ITEMS=[
-  {id:'bigMag',name:'Big Magazine',desc:'12 rounds instead of 8',price:200,cat:'firepower',icon:'\u{1F52B}',group:null},
-  {id:'fastReload',name:'Speed Loader',desc:'Reload 40% faster',price:300,cat:'firepower',icon:'\u26A1',group:null},
-  {id:'powerShots',name:'Power Rounds',desc:'+1 damage per shot',price:500,cat:'firepower',icon:'\u{1F4A5}',group:null},
-  {id:'toughBody',name:'Kevlar Vest',desc:'Start with 125 HP',price:250,cat:'armor',icon:'\u{1F6E1}\uFE0F',group:null},
-  {id:'healKit',name:'Healing Kit',desc:'Press H to heal 30 HP once',price:400,cat:'armor',icon:'\u{1F48A}',group:null},
-  {id:'thickSkin',name:'Thick Skin',desc:'Take 40% less zombie damage',price:600,cat:'armor',icon:'\u{1F9F1}',group:null},
-  {id:'scoreBoost',name:'Score Booster',desc:'1.5x point multiplier',price:350,cat:'special',icon:'\u{1F4C8}',group:null},
-  {id:'brainBoost',name:'Brain Boost',desc:'25s on quiz instead of 15',price:300,cat:'special',icon:'\u{1F9E0}',group:null},
-  {id:'freezeBlast',name:'Freeze Blast',desc:'Press F to freeze zombies 3s',price:500,cat:'special',icon:'\u{1F9CA}',group:null},
-  {id:'extraLife',name:'Extra Life',desc:'Revive once when you die',price:800,cat:'special',icon:'\u{1F496}',group:null},
-  {id:'redCross',name:'Red Crosshair',desc:'Red targeting reticle',price:100,cat:'style',icon:'\u{1F534}',group:'cross'},
-  {id:'blueCross',name:'Blue Crosshair',desc:'Blue targeting reticle',price:100,cat:'style',icon:'\u{1F535}',group:'cross'},
-  {id:'goldGun',name:'Golden Gun',desc:'Shiny gold weapon skin',price:400,cat:'style',icon:'\u2728',group:null},
-  {id:'fireBullets',name:'Fire Rounds',desc:'Orange muzzle flash',price:200,cat:'style',icon:'\u{1F525}',group:null},
-  {id:'luckyGems',name:'Lucky Charm',desc:'+3 bonus gems at every daily checkpoint',price:25,cat:'gems',icon:'\u{1F340}',group:null,currency:'gems'},
-  {id:'superKick',name:'Super Kick',desc:'Harder soccer shots + bigger goal bonus',price:18,cat:'gems',icon:'\u26BD',group:null,currency:'gems'},
-  {id:'doubleJump',name:'Air Soles',desc:'Double-jump in parkour',price:22,cat:'gems',icon:'\u{1F45F}',group:null,currency:'gems'},
-  {id:'neonTrail',name:'Neon Trail',desc:'Glow trail while parkouring',price:15,cat:'gems',icon:'\u{1F4A0}',group:null,currency:'gems'},
-  {id:'goldenBoots',name:'Golden Boots',desc:'+1 gem per soccer goal',price:30,cat:'gems',icon:'\u{1F45E}',group:null,currency:'gems'},
+  {id:'bigMag',name:'Big Magazine',cat:'firepower',icon:'\u{1F52B}',group:null,currency:'coins',costs:[200,450,900],lv:['12 rounds instead of 8','16 rounds','20 rounds']},
+  {id:'fastReload',name:'Speed Loader',cat:'firepower',icon:'\u26A1',group:null,currency:'coins',costs:[300,600,1100],lv:['Reload 40% faster','Reload 57% faster','Reload 70% faster']},
+  {id:'powerShots',name:'Power Rounds',cat:'firepower',icon:'\u{1F4A5}',group:null,currency:'coins',costs:[500,1000,1800],lv:['+1 damage per shot','+2 damage per shot','+3 damage per shot']},
+  {id:'toughBody',name:'Kevlar Vest',cat:'armor',icon:'\u{1F6E1}\uFE0F',group:null,currency:'coins',costs:[250,550,1000],lv:['Start with 125 HP','Start with 150 HP','Start with 175 HP']},
+  {id:'healKit',name:'Healing Kit',cat:'armor',icon:'\u{1F48A}',group:null,currency:'coins',costs:[400,800,1400],lv:['Press H to heal 30 HP','Heal 50 HP','Heal 75 HP']},
+  {id:'thickSkin',name:'Thick Skin',cat:'armor',icon:'\u{1F9F1}',group:null,currency:'coins',costs:[600,1200,2000],lv:['Take 25% less damage','Take 40% less damage','Take 55% less damage']},
+  {id:'scoreBoost',name:'Score Booster',cat:'special',icon:'\u{1F4C8}',group:null,currency:'coins',costs:[350,750,1400],lv:['1.5x point multiplier','2x point multiplier','2.5x point multiplier']},
+  {id:'brainBoost',name:'Brain Boost',cat:'special',icon:'\u{1F9E0}',group:null,currency:'coins',costs:[300,650,1200],lv:['25s on quiz instead of 15','35s on quiz','45s on quiz']},
+  {id:'freezeBlast',name:'Freeze Blast',cat:'special',icon:'\u{1F9CA}',group:null,currency:'coins',costs:[500,1000,1700],lv:['Press F to freeze 3s','Freeze 4.5s','Freeze 6s']},
+  {id:'extraLife',name:'Extra Life',cat:'special',icon:'\u{1F496}',group:null,currency:'coins',costs:[800,1600],lv:['Revive once when you die','Revive twice when you die']},
+  {id:'redCross',name:'Red Crosshair',cat:'style',icon:'\u{1F534}',group:'cross',currency:'coins',costs:[100],lv:['Red targeting reticle']},
+  {id:'blueCross',name:'Blue Crosshair',cat:'style',icon:'\u{1F535}',group:'cross',currency:'coins',costs:[100],lv:['Blue targeting reticle']},
+  {id:'goldGun',name:'Golden Gun',cat:'style',icon:'\u2728',group:null,currency:'coins',costs:[400],lv:['Shiny gold weapon skin']},
+  {id:'fireBullets',name:'Fire Rounds',cat:'style',icon:'\u{1F525}',group:null,currency:'coins',costs:[200],lv:['Orange muzzle flash']},
+  {id:'luckyGems',name:'Lucky Charm',cat:'gems',icon:'\u{1F340}',group:null,currency:'gems',costs:[25,50,90],lv:['+3 bonus gems per checkpoint','+5 bonus gems per checkpoint','+8 bonus gems per checkpoint']},
+  {id:'superKick',name:'Super Kick',cat:'gems',icon:'\u26BD',group:null,currency:'gems',costs:[18,36,64],lv:['Harder shots + bigger goal bonus','Even harder shots','Strongest shots + biggest bonus']},
+  {id:'doubleJump',name:'Air Soles',cat:'gems',icon:'\u{1F45F}',group:null,currency:'gems',costs:[22,45],lv:['Double-jump in parkour','Triple-jump in parkour']},
+  {id:'neonTrail',name:'Neon Trail',cat:'gems',icon:'\u{1F4A0}',group:null,currency:'gems',costs:[15],lv:['Glow trail while parkouring']},
+  {id:'goldenBoots',name:'Golden Boots',cat:'gems',icon:'\u{1F45E}',group:null,currency:'gems',costs:[30,60,110],lv:['+1 gem per soccer goal','+2 gems per goal','+3 gems per goal']},
 ];
 const SHOP_CATS=[{key:'firepower',label:'FIREPOWER \u{1F52B}'},{key:'armor',label:'ARMOR \u{1F6E1}\uFE0F'},{key:'special',label:'SPECIAL \u26A1'},{key:'style',label:'STYLE \u{1F3A8}'},{key:'gems',label:'GEM VAULT \u{1F48E}'}];
 function owns(id){return P.inventory.includes(id)}
 function equipped(id){return P.equipped.includes(id)}
+function lvl(id){return owns(id)?(P.levels[id]||1):0}
+function eqLv(id){return equipped(id)?lvl(id):0}
+function lvPick(id,vals,base){const l=eqLv(id);return l?vals[l-1]:base}
+function maxLv(it){return it.costs.length}
+function costFor(it,level){return it.costs[level-1]}
+function canPay(it,cost){return it.currency==='gems'?(P.gems||0)>=cost:P.coins>=cost}
 function buyItem(id){
-  const it=SHOP_ITEMS.find(x=>x.id===id);if(!it||owns(id))return;
-  const gem=it.currency==='gems';
-  if(gem){if((P.gems||0)<it.price)return;P.gems-=it.price}
-  else{if(P.coins<it.price)return;P.coins-=it.price}
-  P.inventory.push(id);
-  if(it.group){P.equipped=P.equipped.filter(x=>{const o=SHOP_ITEMS.find(s=>s.id===x);return!o||o.group!==it.group})}
-  if(!P.equipped.includes(id))P.equipped.push(id);
-  save();Audio.buy();toast(it.name+' purchased!','coin');renderAll();
+  const it=SHOP_ITEMS.find(x=>x.id===id);if(!it)return;
+  const next=lvl(id)+1;if(next>maxLv(it))return;
+  const cost=costFor(it,next);if(!canPay(it,cost))return;
+  if(it.currency==='gems')P.gems-=cost;else P.coins-=cost;
+  if(!owns(id)){
+    P.inventory.push(id);P.levels[id]=1;
+    if(it.group)P.equipped=P.equipped.filter(x=>{const o=SHOP_ITEMS.find(s=>s.id===x);return!o||o.group!==it.group});
+    P.equipped.push(id);
+  }else P.levels[id]=next;
+  save();Audio.buy();
+  toast((next>1?'Upgraded ':'')+it.name+(next>1?' to Lv'+next+'!':'!'),it.currency==='gems'?'gem':'coin');
+  renderAll();
 }
 function toggleEquip(id){
   if(!owns(id))return;
@@ -368,6 +459,7 @@ const Audio={
   shoot(){this._n(.12,.5,2500);this._o('sine',90,.1,.35,30)},
   hit(){this._o('square',900,.08,.15,1200)},
   headshot(){this._o('square',1500,.07,.18,2400);this._o('sine',1000,.12,.15,1600)},
+  milestone(){if(!this.ctx)return;[523,659,784,1047].forEach((fr,i)=>{const t=this.ctx.currentTime+i*.09,o=this.ctx.createOscillator();o.type='triangle';o.frequency.value=fr;const g=this.ctx.createGain();g.gain.setValueAtTime(.18,t);g.gain.linearRampToValueAtTime(0,t+.26);o.connect(g);g.connect(this.ctx.destination);o.start(t);o.stop(t+.26)})},
   zombieDie(){this._o('sawtooth',350,.45,.25,40)},
   groan(){if(!this.ctx)return;const t=this.ctx.currentTime,o=this.ctx.createOscillator();o.type='sawtooth';o.frequency.value=70+Math.random()*30;const lfo=this.ctx.createOscillator();lfo.frequency.value=4+Math.random()*3;const lg=this.ctx.createGain();lg.gain.value=15;lfo.connect(lg);lg.connect(o.frequency);const g=this.ctx.createGain();g.gain.setValueAtTime(.06,t);g.gain.exponentialRampToValueAtTime(.001,t+1.2);const f=this.ctx.createBiquadFilter();f.type='lowpass';f.frequency.value=400;o.connect(f);f.connect(g);g.connect(this.ctx.destination);o.start();lfo.start();o.stop(t+1.2);lfo.stop(t+1.2)},
   correct(){if(!this.ctx)return;[523,659,784].forEach((fr,i)=>{const t=this.ctx.currentTime+i*.12,o=this.ctx.createOscillator();o.type='sine';o.frequency.value=fr;const g=this.ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.25,t+.04);g.gain.linearRampToValueAtTime(0,t+.25);o.connect(g);g.connect(this.ctx.destination);o.start(t);o.stop(t+.25)})},
@@ -445,7 +537,7 @@ function renderDash(){
     h+='<div class="dash-tasks"><h3>Today\'s Tasks <a data-goto="tasks">See All &rarr;</a></h3>';
     active.slice(0,4).forEach(t=>{
       const m=CAT_META[t.category]||CAT_META.other;
-      h+='<div class="mini-task"><div class="check" data-id="'+t.id+'"></div><span class="t-name">'+esc(t.title)+'</span><span class="t-coins">'+m.icon+' '+m.coins+'</span></div>';
+      h+='<div class="mini-task"><div class="check" data-id="'+t.id+'"></div><span class="t-name">'+esc(t.title)+'</span><span class="t-coins">'+m.icon+' '+m.coins+'</span>'+(t.gems?'<span class="t-gems">+'+t.gems+' \u{1F48E}</span>':'')+'</div>';
     });
     if(active.length>4)h+='<div style="text-align:center;padding:6px;color:var(--muted);font-size:.85em">+'+(active.length-4)+' more</div>';
     h+='</div>';
@@ -462,18 +554,44 @@ function renderDash(){
 }
 
 // ── TASKS ──
+const GEM_MISSIONS=[
+  {title:'Brush teeth before games',category:'chores',gems:3},
+  {title:'Water one plant',category:'chores',gems:3},
+  {title:'Read for 20 minutes',category:'reading',gems:5},
+  {title:'Tidy your desk',category:'chores',gems:5},
+  {title:'Practice math facts 15 min',category:'homework',gems:8},
+  {title:'Do 10 minutes of exercise',category:'exercise',gems:8},
+];
+function rewardTag(t,m){
+  return '<span class="t-coins">'+m.coins+' \u{1FA99}</span>'+(t.gems?'<span class="t-gems">+'+t.gems+' \u{1F48E}</span>':'');
+}
+function renderGemBar(){
+  const bar=document.getElementById('gem-bar');if(!bar)return;
+  let h='<span class="gb-lbl">\u{1F48E} Gem missions \u2014 tap to add</span>';
+  GEM_MISSIONS.forEach((g,i)=>{h+='<button class="gem-chip" data-gm="'+i+'">'+esc(g.title)+' +'+g.gems+'</button>'});
+  bar.innerHTML=h;
+  bar.querySelectorAll('[data-gm]').forEach(b=>b.onclick=()=>{
+    const g=GEM_MISSIONS[+b.dataset.gm];
+    if(tasks.some(t=>!t.completed&&t.title===g.title)){toast('Already on your list!','coin');return}
+    newTask(g.title,g.category,g.gems);
+  });
+}
+function newTask(title,category,gems){
+  tasks.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),title,category,gems:gems||0,completed:false,completedAt:null});
+  save();Audio.tick();renderAll();
+}
 function renderTasks(){
   const active=activeTasks(),done=tasks.filter(x=>x.completed);
   let h='<div class="task-section"><h3>Active ('+active.length+')</h3>';
   if(!active.length)h+='<div class="empty-msg">No tasks yet! Add one above.</div>';
   active.forEach(t=>{const m=CAT_META[t.category]||CAT_META.other;
-    h+='<div class="task-item"><div class="check" data-id="'+t.id+'"></div><span class="t-name">'+esc(t.title)+'</span><span class="t-cat">'+m.icon+' '+t.category+'</span><span class="t-coins">'+m.coins+' \u{1FA99}</span><button class="t-del" data-del="'+t.id+'">\u2715</button></div>';
+    h+='<div class="task-item'+(t.source==='milestone'?' from-game':'')+(t.gems?' gem-task':'')+'"><div class="check" data-id="'+t.id+'"></div><span class="t-name">'+esc(t.title)+'</span>'+(t.source==='milestone'?'<span class="t-src">\u{1F3AF} checkpoint</span>':'')+'<span class="t-cat">'+m.icon+' '+t.category+'</span>'+rewardTag(t,m)+'<button class="t-del" data-del="'+t.id+'">\u2715</button></div>';
   });
   h+='</div>';
   if(done.length){
     h+='<div class="task-section"><h3>Completed ('+done.length+')</h3>';
     done.slice(-10).reverse().forEach(t=>{const m=CAT_META[t.category]||CAT_META.other;
-      h+='<div class="task-item done"><div class="check"></div><span class="t-name">'+esc(t.title)+'</span><span class="t-cat">'+m.icon+'</span><span class="t-coins">'+m.coins+' \u{1FA99}</span><button class="t-del" data-del="'+t.id+'">\u2715</button></div>';
+      h+='<div class="task-item done"><div class="check"></div><span class="t-name">'+esc(t.title)+'</span><span class="t-cat">'+m.icon+'</span>'+rewardTag(t,m)+'<button class="t-del" data-del="'+t.id+'">\u2715</button></div>';
     });
     h+='</div>';
   }
@@ -482,10 +600,10 @@ function renderTasks(){
   document.querySelectorAll('.t-del').forEach(el=>el.onclick=()=>{tasks=tasks.filter(t=>t.id!==el.dataset.del);save();renderAll()});
 }
 function addTask(){
-  const inp=document.getElementById('task-input'),cat=document.getElementById('task-cat').value;
+  const inp=document.getElementById('task-input');
   const title=inp.value.trim();if(!title)return;
-  tasks.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),title,category:cat,completed:false,completedAt:null});
-  inp.value='';save();Audio.tick();renderAll();
+  newTask(title,document.getElementById('task-cat').value,+document.getElementById('task-gems').value);
+  inp.value='';
 }
 function completeTask(id){
   const t=tasks.find(x=>x.id===id);if(!t||t.completed)return;
@@ -493,7 +611,9 @@ function completeTask(id){
   t.completed=true;t.completedAt=new Date().toISOString();
   P.coins+=m.coins;P.totalCoins+=m.coins;P.tasksCompleted++;
   P.lastActive=todayStr();
-  save();Audio.complete();toast('+'+m.coins+' coins!','coin');
+  let msg='+'+m.coins+' coins!';
+  if(t.gems){P.gems=(P.gems||0)+t.gems;msg+=' +'+t.gems+' gems!';toast('+'+t.gems+' gems!','gem')}
+  save();Audio.complete();toast(msg,'coin');
   checkDailyCheckpoints();
   renderAll();
 }
@@ -501,21 +621,41 @@ document.getElementById('add-task-btn').onclick=addTask;
 document.getElementById('task-input').addEventListener('keydown',e=>{if(e.key==='Enter')addTask()});
 
 // ── SHOP ──
+function pips(cur,max){
+  let h='<div class="s-pips">';
+  for(let i=1;i<=max;i++)h+='<span class="pip'+(i<=cur?' on':'')+'"></span>';
+  h+='</div>';
+  return h;
+}
 function renderShop(){
   let h='<div class="shop-hdr"><h2>Shop</h2><div class="shop-balance"><span>\u{1FA99} '+P.coins+' coins</span><span class="gems">\u{1F48E} '+(P.gems||0)+' gems</span></div></div>';
+  h+='<div class="shop-hint">Buy an item once, then upgrade it through multiple levels to make it stronger.</div>';
   SHOP_CATS.forEach(cat=>{
     const items=SHOP_ITEMS.filter(x=>x.cat===cat.key);
     h+='<div class="shop-cat"><h3>'+cat.label+'</h3><div class="shop-grid">';
     items.forEach(it=>{
-      const owned=owns(it.id),eq=equipped(it.id);
-      const gem=it.currency==='gems';
-      const bal=gem?(P.gems||0):P.coins;
-      const canBuy=!owned&&bal>=it.price;
+      const owned=owns(it.id),eq=equipped(it.id),gem=it.currency==='gems';
       const unit=gem?'\u{1F48E}':'\u{1FA99}';
+      const max=maxLv(it),cur=lvl(it.id),next=cur+1,isMax=owned&&cur>=max;
+      const bal=gem?(P.gems||0):P.coins;
       h+='<div class="shop-card'+(owned?' owned':'')+(eq?' equipped':'')+'">';
-      h+='<div class="s-icon">'+it.icon+'</div><div class="s-name">'+it.name+'</div><div class="s-desc">'+it.desc+'</div>';
-      if(!owned)h+='<div class="s-price'+(gem?' gems':'')+'">'+it.price+' '+unit+'</div><button class="buy-btn '+(canBuy?'can-buy':'no-buy')+'" data-buy="'+it.id+'">'+(canBuy?'BUY':'Need '+it.price)+'</button>';
-      else h+='<button class="buy-btn '+(eq?'is-eq':'toggle-eq')+'" data-eq="'+it.id+'">'+(eq?'EQUIPPED':'EQUIP')+'</button>';
+      h+='<div class="s-icon">'+it.icon+'</div><div class="s-name">'+it.name+'</div>';
+      if(owned)h+='<div class="s-lv">LV '+cur+' / '+max+'</div>'+pips(cur,max);
+      h+='<div class="s-desc">'+it.lv[owned?cur-1:0]+'</div>';
+      if(!owned){
+        const cost=costFor(it,1),can=bal>=cost;
+        h+='<div class="s-price'+(gem?' gems':'')+'">'+cost+' '+unit+'</div>';
+        h+='<button class="buy-btn '+(can?'can-buy':'no-buy')+'" data-buy="'+it.id+'">'+(can?'BUY':'Need '+cost)+'</button>';
+      }else if(isMax){
+        h+='<div class="s-max">MAX LEVEL</div>';
+        h+='<button class="buy-btn '+(eq?'is-eq':'toggle-eq')+'" data-eq="'+it.id+'">'+(eq?'EQUIPPED':'EQUIP')+'</button>';
+      }else{
+        const cost=costFor(it,next),can=bal>=cost;
+        h+='<div class="s-next">\u2192 '+it.lv[next-1]+'</div>';
+        h+='<div class="s-price'+(gem?' gems':'')+'">'+cost+' '+unit+'</div>';
+        h+='<button class="buy-btn '+(can?'can-buy':'no-buy')+'" data-buy="'+it.id+'">'+(can?'UPGRADE':'Need '+cost)+'</button>';
+        h+='<button class="buy-btn eq-mini '+(eq?'is-eq':'toggle-eq')+'" data-eq="'+it.id+'">'+(eq?'EQUIPPED':'EQUIP')+'</button>';
+      }
       h+='</div>';
     });
     h+='</div></div>';
@@ -535,7 +675,7 @@ function renderPregame(){
     {id:'soccer',icon:'\u26BD',name:'Street Soccer',desc:'Dribble, pass the keeper, rack up goals.'},
     {id:'parkour',icon:'\u{1F3C3}',name:'Rooftop Parkour',desc:'Jump rooftops, nail checkpoints, stay airborne.'},
   ];
-  let h='<div class="pregame"><h2>\u{1F3AE} ARCADE FLOOR</h2><p class="sub">Pick a game. Task bonuses apply to all of them.</p>';
+  let h='<div class="pregame"><h2>\u{1F3AE} ARCADE FLOOR</h2><p class="sub">Pick a game. Task bonuses apply to all of them \u2014 and every checkpoint you reach adds a brand-new task to your list.</p>';
   h+='<div class="game-pick">';
   games.forEach(g=>{
     h+='<div class="game-card'+(selectedGame===g.id?' selected':'')+'" data-game="'+g.id+'"><div class="g-icon">'+g.icon+'</div><h3>'+g.name+'</h3><p>'+g.desc+'</p></div>';
@@ -543,7 +683,7 @@ function renderPregame(){
   h+='</div>';
   if(eqItems.length){
     h+='<div class="loadout"><h3>Your Loadout</h3><div class="loadout-items">';
-    eqItems.forEach(it=>h+='<span class="loadout-tag">'+it.icon+' '+it.name+'</span>');
+    eqItems.forEach(it=>{const l=lvl(it.id);h+='<span class="loadout-tag">'+it.icon+' '+it.name+(l>1?' <b>Lv'+l+'</b>':'')+'</span>'});
     h+='</div></div>';
   }
   h+='<div class="task-bonus-box"><h3>\u2705 Task Bonuses</h3>';
@@ -554,9 +694,9 @@ function renderPregame(){
   if(done>=5)h+='<div class="bonus-line"><span>Bonus ammo / speed</span><span class="b-val">+4 / +10%</span></div>';
   h+='</div>';
   let hint='ESC to exit';
-  if(selectedGame==='zombie')hint='AIM with mouse \u2022 CLICK to shoot \u2022 R to reload \u2022 '+hint+(equipped('healKit')?' \u2022 H to heal':'')+(equipped('freezeBlast')?' \u2022 F to freeze':'');
+  if(selectedGame==='zombie')hint='AIM with mouse \u2022 CLICK to shoot \u2022 R to reload \u2022 '+hint+(eqLv('healKit')?' \u2022 H to heal +'+lvPick('healKit',[30,50,75],0):'')+(eqLv('freezeBlast')?' \u2022 F to freeze '+lvPick('freezeBlast',[3,4.5,6],0)+'s':'');
   if(selectedGame==='soccer')hint='WASD / arrows to run \u2022 CLICK or SPACE to kick toward the cursor \u2022 '+hint;
-  if(selectedGame==='parkour')hint='SPACE / UP to jump'+(equipped('doubleJump')?' (double-jump equipped)':'')+' \u2022 DOWN to drop \u2022 '+hint;
+  if(selectedGame==='parkour')hint='SPACE / UP to jump'+(eqLv('doubleJump')?' ('+lvPick('doubleJump',[1,2],0)+' extra jump'+(lvPick('doubleJump',[1,2],0)>1?'s':'')+')':'')+' \u2022 DOWN to drop \u2022 '+hint;
   h+='<div class="controls-hint">'+hint+'</div>';
   h+='<button class="play-btn" id="start-game-btn">START GAME</button></div>';
   document.getElementById('pregame-content').innerHTML=h;
@@ -610,29 +750,39 @@ const stars=[];for(let i=0;i<120;i++)stars.push({x:Math.random(),y:Math.random()
 const G={
   FOCAL:500,PH:2.5,ZSZ:3,HORIZON:.55,
   maxAmmo:8,reloadTime:1500,bonusDmg:0,maxHP:100,
-  scoreMulti:1,quizTime:15,hasHealKit:false,healUsed:false,
-  hasFreezeBlast:false,freezeUsed:false,frozen:false,frozenT:0,
-  hasExtraLife:false,lifeUsed:false,dmgReduction:1,
+  scoreMulti:1,quizTime:15,hasHealKit:false,healUsed:false,healAmount:0,
+  hasFreezeBlast:false,freezeUsed:false,frozen:false,frozenT:0,freezeDur:0,
+  livesLeft:0,extraLives:0,dmgReduction:1,
+  kickPow:560,goalPts:250,bootsGems:0,extraJumps:0,luckyGems:0,neonTrail:false,
   crossColor:'#0f0',gunColor:'#2a2a2a',gunHighlight:'#3a3a3a',flashColor:'#ff8',
   ATK_RANGE:1.8,ATK_DMG:12,SPAWN_MIN:22,SPAWN_MAX:48,
   RECOIL:30,SHOOT_CD:350,
 };
 function applyShopEffects(){
-  const has=id=>P.equipped.includes(id);
-  G.maxAmmo=has('bigMag')?12:8;
-  G.reloadTime=has('fastReload')?900:1500;
-  G.bonusDmg=has('powerShots')?1:0;
-  G.maxHP=has('toughBody')?125:100;
-  G.hasHealKit=has('healKit');G.healUsed=false;
-  G.thickSkin=has('thickSkin');G.dmgReduction=has('thickSkin')?.6:1;
-  G.scoreMulti=has('scoreBoost')?1.5:1;
-  G.quizTime=has('brainBoost')?25:15;
-  G.hasFreezeBlast=has('freezeBlast');G.freezeUsed=false;G.frozen=false;G.frozenT=0;
-  G.hasExtraLife=has('extraLife');G.lifeUsed=false;
-  G.crossColor=has('blueCross')?'#44f':has('redCross')?'#f44':'#0f0';
-  G.gunColor=has('goldGun')?'#b8941f':'#2a2a2a';
-  G.gunHighlight=has('goldGun')?'#d4af37':'#3a3a3a';
-  G.flashColor=has('fireBullets')?'#f60':'#ff8';
+  const lv=id=>equipped(id)?lvl(id):0;
+  G.maxAmmo=lvPick('bigMag',[12,16,20],8);
+  G.reloadTime=lvPick('fastReload',[900,650,450],1500);
+  G.bonusDmg=lvPick('powerShots',[1,2,3],0);
+  G.maxHP=lvPick('toughBody',[125,150,175],100);
+  G.healAmount=lvPick('healKit',[30,50,75],0);
+  G.hasHealKit=G.healAmount>0;G.healUsed=false;
+  G.dmgReduction=lvPick('thickSkin',[.75,.6,.45],1);
+  G.scoreMulti=lvPick('scoreBoost',[1.5,2,2.5],1);
+  G.quizTime=lvPick('brainBoost',[25,35,45],15);
+  G.freezeDur=lvPick('freezeBlast',[3,4.5,6],0);
+  G.hasFreezeBlast=G.freezeDur>0;G.freezeUsed=false;G.frozen=false;G.frozenT=0;
+  G.extraLives=lvPick('extraLife',[1,2],0);
+  G.livesLeft=G.extraLives;
+  G.kickPow=lvPick('superKick',[780,900,1020],560);
+  G.goalPts=lvPick('superKick',[350,450,550],250);
+  G.bootsGems=lvPick('goldenBoots',[1,2,3],0);
+  G.extraJumps=lvPick('doubleJump',[1,2],0);
+  G.luckyGems=lvPick('luckyGems',[3,5,8],0);
+  G.neonTrail=lv('neonTrail')>0;
+  G.crossColor=lv('blueCross')?'#44f':lv('redCross')?'#f44':'#0f0';
+  G.gunColor=lv('goldGun')?'#b8941f':'#2a2a2a';
+  G.gunHighlight=lv('goldGun')?'#d4af37':'#3a3a3a';
+  G.flashColor=lv('fireBullets')?'#f60':'#ff8';
   // Task bonuses
   const done=todayTasks().length;
   G.taskMulti=done>=5?1.5:done>=3?1.25:1;
@@ -776,9 +926,9 @@ function drawHUD(){
   ctx.fillText('Quiz in: '+qi+' kill'+(qi!==1?'s':''),canvas.width-20,38);
   // Power-up indicators
   let indY=58;
-  if(G.hasHealKit&&!G.healUsed){ctx.fillStyle='#2ecc71';ctx.fillText('[H] Heal Ready',canvas.width-20,indY);indY+=20}
-  if(G.hasFreezeBlast&&!G.freezeUsed){ctx.fillStyle='#44f';ctx.fillText('[F] Freeze Ready',canvas.width-20,indY);indY+=20}
-  if(G.hasExtraLife&&!G.lifeUsed){ctx.fillStyle='#e94560';ctx.fillText('Extra Life Ready',canvas.width-20,indY)}
+  if(G.hasHealKit&&!G.healUsed){ctx.fillStyle='#2ecc71';ctx.fillText('[H] Heal +'+G.healAmount,canvas.width-20,indY);indY+=20}
+  if(G.hasFreezeBlast&&!G.freezeUsed){ctx.fillStyle='#44f';ctx.fillText('[F] Freeze '+G.freezeDur+'s',canvas.width-20,indY);indY+=20}
+  if(G.livesLeft>0){ctx.fillStyle='#e94560';ctx.fillText('Extra Life x'+G.livesLeft,canvas.width-20,indY)}
   // Coins earned this game
   ctx.fillStyle='#f1c40f';ctx.font='bold 15px Arial';ctx.textAlign='left';
   ctx.fillText('\u{1FA99} '+S.gameCoins,20,canvas.height-60);
@@ -830,8 +980,8 @@ addEventListener('keydown',e=>{
   if(S.phase!=='playing')return;
   if(S.mode==='zombie'){
     if(e.key==='r'||e.key==='R'){if(!S.reloading&&S.ammo<G.maxAmmo)startReload()}
-    if((e.key==='h'||e.key==='H')&&G.hasHealKit&&!G.healUsed){G.healUsed=true;S.health=Math.min(G.maxHP+G.taskBonusHP,S.health+30);Audio.correct();S.popups.push(new Pop(canvas.width/2,canvas.height/2-50,'+30 HP','#2ecc71'))}
-    if((e.key==='f'||e.key==='F')&&G.hasFreezeBlast&&!G.freezeUsed){G.freezeUsed=true;G.frozen=true;G.frozenT=3;Audio.hit()}
+    if((e.key==='h'||e.key==='H')&&G.hasHealKit&&!G.healUsed){G.healUsed=true;S.health=Math.min(G.maxHP+G.taskBonusHP,S.health+G.healAmount);Audio.correct();S.popups.push(new Pop(canvas.width/2,canvas.height/2-50,'+'+G.healAmount+' HP','#2ecc71'))}
+    if((e.key==='f'||e.key==='F')&&G.hasFreezeBlast&&!G.freezeUsed){G.freezeUsed=true;G.frozen=true;G.frozenT=G.freezeDur;Audio.hit()}
   }
   if(e.repeat)return;
   if(S.mode==='soccer'&&e.code==='Space')soccerKick();
@@ -909,7 +1059,7 @@ function soccerKick(){
   const dx=b.x-p.x,dy=b.y-p.y,d=Math.hypot(dx,dy);
   if(d>p.r+b.r+22)return;
   let kx=S.mx-b.x,ky=S.my-b.y,kl=Math.hypot(kx,ky)||1;
-  const pow=equipped('superKick')?780:560;
+  const pow=G.kickPow;
   b.vx=(kx/kl)*pow;b.vy=(ky/kl)*pow;SO.kickCD=.28;Audio.kick();
 }
 function circlePush(a,b){
@@ -937,10 +1087,10 @@ function updateSoccer(dt){
     const goalL=canvas.width/2-70,goalR=canvas.width/2+70,goalY=SO.t+18;
     const inGoal=b.y-b.r<goalY&&b.x>goalL&&b.x<goalR&&b.vy<0;
     if(inGoal){
-      SO.goals++;const pts=Math.round((equipped('superKick')?350:250)*G.scoreMulti*G.taskMulti);
+      SO.goals++;const pts=Math.round(G.goalPts*G.scoreMulti*G.taskMulti);
       S.score+=pts;S.gameCoins+=Math.round(25*G.taskMulti);
-      if(equipped('goldenBoots')){S.gameGems++;P.gems=(P.gems||0)+1;save()}
-      S.popups.push(new Pop(b.x,b.y,'GOAL! +'+pts,'#f1c40f'));Audio.goal();
+      if(G.bootsGems){S.gameGems+=G.bootsGems;P.gems=(P.gems||0)+G.bootsGems;save()}
+      S.popups.push(new Pop(b.x,b.y,'GOAL! +'+pts+(G.bootsGems?' +'+G.bootsGems+' \u{1F48E}':''),'#f1c40f'));Audio.goal();
       soccerResetBall(true);return;
     }
     if(b.x<SO.l+b.r){b.x=SO.l+b.r;b.vx*=-0.7}
@@ -1010,7 +1160,7 @@ function parkourSpawn(){
 }
 function parkourJump(){
   if(S.phase!=='playing')return;
-  const maxJ=equipped('doubleJump')?2:1;
+  const maxJ=1+G.extraJumps;
   if(PK.onGround||PK.coyote>0){PK.vy=-680;PK.onGround=false;PK.coyote=0;PK.jumps=1;Audio.jump()}
   else if(PK.jumps<maxJ){PK.vy=-560;PK.jumps++;Audio.jump()}
 }
@@ -1039,7 +1189,7 @@ function updateParkour(dt){
       S.popups.push(new Pop(c.x-PK.cam,c.y,'+'+pts,'#f1c40f'));Audio.tick();
     }
   });
-  if(equipped('neonTrail')){PK.trail.push({x:px,y:py,life:.35});PK.trail=PK.trail.filter(t=>{t.life-=dt;return t.life>0})}
+  if(G.neonTrail){PK.trail.push({x:px,y:py,life:.35});PK.trail=PK.trail.filter(t=>{t.life-=dt;return t.life>0})}
   S.score=Math.max(S.score,Math.floor(PK.x/8*G.scoreMulti*G.taskMulti));
   S.popups=S.popups.filter(x=>x.update(dt));
   if(PK.y>canvas.height+40)endGame();
@@ -1063,7 +1213,7 @@ function drawParkour(){
     if(p.spike){for(let i=0;i<p.w;i+=10){ctx.beginPath();ctx.moveTo(x+i,p.y);ctx.lineTo(x+i+5,p.y-7);ctx.lineTo(x+i+10,p.y);ctx.fill()}}
   });
   PK.coins.forEach(c=>{if(c.got)return;ctx.fillStyle='#f1c40f';ctx.beginPath();ctx.arc(c.x-cam,c.y,7,0,Math.PI*2);ctx.fill()});
-  if(equipped('neonTrail'))PK.trail.forEach(t=>{ctx.globalAlpha=t.life*2;ctx.fillStyle='#00e5ff';ctx.fillRect(t.x-cam,t.y+8,18,12);ctx.globalAlpha=1});
+  if(G.neonTrail)PK.trail.forEach(t=>{ctx.globalAlpha=t.life*2;ctx.fillStyle='#00e5ff';ctx.fillRect(t.x-cam,t.y+8,18,12);ctx.globalAlpha=1});
   const px=PK.x-cam,py=PK.y;
   ctx.fillStyle='#e94560';ctx.fillRect(px,py,22,28);
   ctx.fillStyle='#ffd7c2';ctx.fillRect(px+5,py-10,12,12);
@@ -1071,7 +1221,7 @@ function drawParkour(){
   ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='left';
   ctx.fillText(Math.floor(PK.x/10)+'m',20,32);
   ctx.fillStyle='#f1c40f';ctx.font='16px Arial';ctx.fillText('\u{1FA99} '+S.gameCoins,20,56);
-  if(equipped('doubleJump')){ctx.fillStyle='#c084fc';ctx.fillText('Double jump ready',20,78)}
+  if(G.extraJumps>0){ctx.fillStyle='#c084fc';ctx.fillText(G.extraJumps+' extra jump'+(G.extraJumps>1?'s':'')+' ready',20,78)}
   S.popups.forEach(x=>x.draw());
 }
 
@@ -1086,6 +1236,7 @@ function enterGame(){
   applyShopEffects();
   S.mode=selectedGame;
   S.phase='playing';S.running=true;S.lt=performance.now();S.time=0;S.particles=[];S.popups=[];S.gameCoins=0;S.gameGems=0;
+  awardedMilestones=[];
   openCanvas();
   if(S.mode==='zombie'){
     const mxHP=G.maxHP+G.taskBonusHP;
@@ -1162,6 +1313,7 @@ function loop(ts){
   const dt=Math.min((ts-S.lt)/1000,.05);S.lt=ts;S.time+=dt;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if(S.phase==='gameover')return;
+  if(S.phase==='playing')checkMilestones();
   if(S.mode==='soccer'){updateSoccer(dt);drawSoccer();return}
   if(S.mode==='parkour'){updateParkour(dt);drawParkour();return}
 
@@ -1176,7 +1328,7 @@ function loop(ts){
     spawn(dt);S.zombies=S.zombies.filter(z=>z.update(dt));
     S.particles=S.particles.filter(p=>p.update(dt));S.popups=S.popups.filter(p=>p.update(dt));
     if(S.health<=0){
-      if(G.hasExtraLife&&!G.lifeUsed){G.lifeUsed=true;S.health=Math.round((G.maxHP+G.taskBonusHP)*.5);S.popups.push(new Pop(canvas.width/2,canvas.height/2-80,'EXTRA LIFE!','#e94560'));Audio.correct()}
+      if(G.livesLeft>0){G.livesLeft--;S.health=Math.round((G.maxHP+G.taskBonusHP)*.5);S.popups.push(new Pop(canvas.width/2,canvas.height/2-80,'EXTRA LIFE!','#e94560'));Audio.correct()}
       else{S.health=0;endGame()}
     }
   }
@@ -1187,6 +1339,7 @@ function loop(ts){
 requestAnimationFrame(loop);
 
 // ── INIT ──
+renderGemBar();
 renderAll();
 </script>
 </body>
